@@ -1,0 +1,328 @@
+﻿/******************************************************
+** Copyright(c) 2011, 哈尔滨工程大学信息安全研究中心
+** All rights reserved
+** 文件名:keywrd_match.c
+** 描  述:关键匹配自动机
+
+******************************************************/
+#include "keyword_match.h"
+ extern MATCHENTRY *entry;
+/*********************************************************************************************************
+ *  Function Name: MatchentryInit
+ *  Purpose      : 初始化一个用来完成多模字符串匹配的MATCHENTRY                   
+ *  Parameter    : nSize : 需要匹配的关键字表容量
+ *********************************************************************************************************/
+MATCHENTRY * MatchEntryInit(int nSize)
+{
+    MATCHENTRY *entry;
+    int size;
+    int kl;
+    entry = (MATCHENTRY *)malloc(sizeof(MATCHENTRY));  //申请内存空间 
+    if (!entry)
+        return NULL;
+        
+    size = (nSize > 2) ? nSize:2;    
+    kl = sizeof(KEYWORD) * size;
+    entry->wordlist = (KEYWORD *)malloc( kl);
+    entry->wordlistlength=size;                    //对数据结构中的各项初始化 
+    entry->wordsnum=0;
+    entry->totalfind=0;
+    entry->wordslength=0;
+    entry->states=NULL;
+    entry->usedstates=0;
+    return entry;
+}
+/*************************************************************************************
+ *  Function Name: Addkeyword
+ *  Purpose      :向自动机的关键字列表中填加关键字
+                   
+ *  Parameter    :word指向关键字内容指针，len关键字长度，entry所属的状态机
+ *************************************************************************************/
+int Addkeyword(const char *word,int len, MATCHENTRY *entry, void *ptr)
+{ 
+    int length;
+    int i;    
+    length = (len > 0)?len:strlen(word);
+    if (!length) return -1;
+    if (entry->wordsnum == entry->wordlistlength)  //如果关键字数目等于关键字表长 ，也就是关键字表满了 
+    {
+        KEYWORD *templist;
+        entry->wordlistlength += entry->wordlistlength;    //关键字表满了的话，就自动把表的长度增加一倍 
+        templist=(KEYWORD *)malloc(sizeof(KEYWORD)*(entry->wordlistlength));   
+        
+        for (i = 0; i < entry->wordsnum; i++)
+            templist[i] = entry->wordlist[i];
+        
+        if (entry->wordlist!=NULL)
+        {
+            free(entry->wordlist);
+        } 
+        entry->wordlist=templist;
+    }
+    
+    entry->wordlist[entry->wordsnum].word=(unsigned char *)malloc(length+2); //为新添加的关键字申请内存  
+    memcpy(entry->wordlist[entry->wordsnum].word, word, length);    //赋值语句 
+    entry->wordlist[entry->wordsnum].word[length]=0;
+    entry->wordlist[entry->wordsnum].length=length;
+    entry->wordlist[entry->wordsnum].findnum=0;
+    entry->wordlist[entry->wordsnum].ptr = ptr;
+    entry->wordsnum++; 
+    entry->wordslength+=length;                                   //加上这个关键字后所有关键字的总长度 
+    printf("have add key!!\n");
+    return entry->wordsnum;                                       //返回关键字数量的总数 
+}
+/*************************************************************************************
+ *  Function Name: Buildentry
+ *  Purpose      :建立自动机
+                   
+ *  Parameter    :model--是否忽略字母的大小写，最低位为1表示忽略大小写，0表示相反
+                    len--关键字长度
+                  entry--状态机
+ *************************************************************************************/
+int Buildentry(int model, MATCHENTRY *entry)
+{
+    int i,j;
+    STATE  k,l,n;
+    unsigned char c;
+    STATE *from,*to;
+    int   first=0,last=0, is_prefix;    
+
+    if (entry->wordsnum < 1) 
+        return 0;
+    if (entry->states != NULL) //如果还占有内存区域，则释放这片内存
+    free(entry->states);    
+   //第一阶段：生成状态转换图 
+
+    entry->states = (STATESLIST)malloc(sizeof(STATE)*(entry->wordslength+2)*(KN+1)); 
+    memset((void *)entry->states,0,sizeof(STATE)*(entry->wordslength+2)*(KN+1));  
+        //把buffer所指内存区域的前count个字节设置成字符c。
+    k = entry->wordsnum + 1;                //k=关键字数加1 
+    for (i = 0; i < entry->wordsnum; i++)
+    {
+        n = l = 0;
+        is_prefix = 1;
+        for (j = 0; j < entry->wordlist[i].length; j++)//对关键字wordlist[i]的每个字符进行判断 
+        {
+            l = n;
+            c = entry->wordlist[i].word[j];   
+        	
+            if (!(model & FIND_MATCHCASE))    //不忽略大小写 
+                if (c >= 'a' && c<= 'z')
+                    c = c - 32;
+        	
+            if (entry->states[l][c] == 0) {
+                is_prefix = 0;                
+                entry->states[l][c] = n = k++;        //k（关键字数+1）赋给n,k再加1 
+        	}                                         //entry->state[l][c]指向结束的状态 
+            else 
+                n = entry->states[l][c];              //entry->state[l][c]赋给n 
+        }
+        entry->states[l][c] = i + 1;
+    
+        if (n == k - 1) {
+            /* 出现n == k - 1，有两种可能。
+             * 1。该关键字没有出现过：如else，递减k
+             *    最后一次entry->states[l][c] = n = k++
+             *    使得n指向结束的状态，k指向下一个空闲的状态
+             *    又因为循环外面的entry->states[l][c] = i + 1
+             *    使得结束状态由n变为i + 1，所以此时n也指向
+             *    一个空闲的状态，而且n = k - 1，所以递减k
+             *    保证不浪费空间。
+             * 2。可能是因为本关键字是上一个关键字的前缀，
+             *    而且上一个关键字的长度比本关键字大1，使得
+             *    n = entry->states[l][c]得到的n正好等于k-1，
+             *    例如abc和ab的情况。这里有个疑问：hhhh, xyz, abcd, efg会出现什么样的情况呢？
+             *    这也满足if语句，而且如果它们是全部的关键字的时候可以造成SEGMENT FAULT
+             *    entry->states[n]的内存没有分配。'hhhh, xyz'造成状态泄漏一次（k没有减1）
+             *    'abcd, efg'又造成泄漏一次，于是此时需要的状态是n = 1 + 4 + 3 + 1 + 4 + 3 = 16
+             *    entry->states[n]泄漏，因为entry->states只分配了16个（0-15）。*/
+            
+
+            if (is_prefix == 1)    //本关键字是上一个关键字的前缀
+                    memcpy(entry->states[i+1], entry->states[n], KN*sizeof(STATE));     	
+            else            //该关键字没有出现过
+                k--; 
+        }
+        /* 表明第i个关键字是以前某个关键字的前缀，
+         * 所以需要拷贝长关键字的当前状态到当前关键字的结束状态
+         * 以保证状态转移可以从该关键字的结束状态平滑地继续下去 
+         */
+        else 
+            memcpy(entry->states[i+1], entry->states[n], KN*sizeof(STATE)); 
+            
+        entry->states[i+1][KN] = i + 1;
+    }
+    
+    entry->usedstates = k;//指出本状态图最终使用的状态数目 
+  
+    entry->states = (STATESLIST)realloc(entry->states,sizeof(STATE)*(k+3)*(KN+1));   //重新分配状态图空间，以前分配的空间太大
+
+    /* 第二阶段：用失败函数修改状态转换表。
+     * 失败函数在状态转换失败，即states[i][ch] = fail的时候发挥作用
+     * 此时无法找到下一个状态，所以必须填充
+     * 这样的states[i][ch]，以保证状态转换可以平滑地继续下去。 
+     */
+    
+    /* from和to组成失败函数，f(to[i]) = from[i]。
+     * 假设状态s用串u表示，状态t用串v表示，
+     * 那么f(s) = t意味着在所有状态中，v是u的最长的真后缀，而且是某个关键字的前缀。
+     */
+    /* 初始大小是entry->wordsnum + 1是因为任一时刻的状态最多有entry->wordsnum个 
+     * 因为在任一时刻表示一个关键字的n个状态最多只有一个会出现在to队列中，
+     * from和to意义对应，所以也不会超过entry->wordsnum
+     */
+    from = (STATE *)malloc(sizeof(STATE)*(entry->wordsnum+1));
+    /* 自动机的状态图形成一个有向树的结构，开始状态0就是根节点。
+     * 程序使用一个深度优先的树查找算法，按照深度依次将状态插入
+     * to这个循环队列中。对每个关键字而言，都是先插入深度小状态的，
+     * 再插入深度大的状态，后者只有在前者出列的情况下才可能被插入，
+     * 所以任一时刻表示一个关键字的n个状态最多只有一个会出现在to队列中。
+     *
+     * 状态A的深度就是从开始状态到状态A的最短路径的长度
+     */
+    to = (STATE *)malloc(sizeof(STATE)*(entry->wordsnum+1));
+    for (i = 0; i < KN; i++)
+        if (entry->states[0][i])
+        {
+            
+            from[last] = 0;//对所有深度为1的状态s，都有f(s) = 0
+           
+            to[last++] = entry->states[0][i]; // 深度1的状态入队列,depth is 1,so the last state must be 0;
+        }
+    
+   
+    while(first != last) //只要to队列不为空 
+    {
+        for (i = 0; i < KN; i++)
+        {
+
+            if (entry->states[to[first]][i])//depth first/last
+            { 
+                l = entry->states[to[first]][i]; 
+                from[last] = entry->states[from[first]][i];
+                to[last]=l;
+                /* 关键字s和t，s = utv，u对应的状态是A，ut对应的状态是B，s对应的状态是C
+                 * 那么匹配的内容为s的时候，状态转换过程应该是
+                 * （...A...B...C，.代表中间状态），这就出现一个问题当到达状态B的时候，
+                 * 自动机必须知道现在有一个关键字可以匹配（失败函数的定义表明它一定表示
+                 * 某个关键字的前缀，所以可以根据它达到目的），
+                 * 所以在这里更改该状态的KN字节使其表示被匹配的关键字t。
+                 */
+                if (entry->states[from[last]][KN])
+            	{
+            		
+                    /* 这里的if语句也是为了得到最长的匹配关键字 
+                     * 对大多数from[last] <= entry->wordsnum的情况，
+                     * entry->states[from[last]][KN] == from[last];
+                     * 但如果两个关键字后缀相同那么，长的关键字的
+                     * entry->states[state][KN] != state，而是等于短的关键字的state，
+                     * 所以当if (from[last]>=1 && from[last] <= entry->wordsnum)成立的时候
+                     * 用from[last]而不是entry->states[from[last]][KN]
+                	 */
+            		
+                    //例如关键字'ab', 'ttabcd' 
+                    if (from[last]>=1 && from[last] <= entry->wordsnum)
+                        entry->states[to[last]][KN] = from[last];
+                    //例如关键字'ab', 'ttabcd', 'xttabzz'
+                    else
+                        entry->states[to[last]][KN] = 
+                            entry->states[from[last]][KN];
+            	}
+                last = (last+1) % (entry->wordsnum+1);  
+        	}
+            else 
+        	{
+                l=entry->states[from[first]][i];
+                entry->states[to[first]][i]=l;
+        	}
+        }
+        first=(first+1) % (entry->wordsnum+1); 
+    }
+
+    if (!(model & FIND_MATCHCASE))
+    {
+        for(i=0; i<entry->usedstates; i++)
+            for (j='a';j<='z';j++)
+                entry->states[i][j] = entry->states[i][j-32];
+    }
+    
+    free(from);
+    free(to);
+    return 1;
+}
+/*************************************************************************************
+ *  Function Name: Match
+ *  Purpose      :查找出文本中所有出现的关键字,文本以NULL结束
+                   
+ *  Parameter    :p--输入的文本，state--当前自动机停留的状态，entry--自动机
+ *************************************************************************************/
+char *Match(const char *p,STATE state, MATCHENTRY *entry, char * findword)
+{   
+    int w,Find=0;  
+     memset(findword,0,strlen(findword));//实践证明findword应该是main函数中的缓冲区用来存储，命中的key
+    // memset(findword,0,(sizeof(char))*100);
+    //printf(" match %s\n",p);
+    while(*p) //有文本输入 
+    {   //printf("zhelishilll match %s\n",p);
+        state=entry->states[state][(unsigned char)*p];
+        if (entry->states[state][KN])
+        {
+            if (state<=entry->wordsnum)
+        	{//printf("XXXX\n");
+                entry->wordlist[state-1].findnum++;  
+                strcat( findword , entry->wordlist[state-1].word);//此处段错误，可以匹配成的其实。我去掉里(const char *)可以打印entry->wordlist[state-1].word
+				Find=1;
+                //printf("findword %s\n",findword);
+                strcat( findword , " " );
+                
+                entry->totalfind++;     
+        	}
+        	
+            w=state;    
+            while (w!=(entry->states[w][KN]))
+        	{
+                w=entry->states[w][KN];
+                if(w<=entry->wordsnum)
+                {   entry->wordlist[w-1].findnum++;                    
+                    strcat( findword , (const char *)entry->wordlist[state-1].word);
+					Find=1;
+                    strcat( findword , " " );  //每个关键字后空一格 
+                    entry->totalfind++;
+            	}
+        		
+        	}
+        }printf("####\n");
+        p++;
+    }printf("\nllalall allalal \n");
+    if( Find==1)
+    //printf("自动机检查为垃圾邮件\n");
+    //printf("findword=%s\n",findword);
+		return findword;
+    else
+		return NULL;
+}
+/*************************************************************************************
+ *  Function Name:RemoveEntry
+ *  Purpose      :删除旧的自动机
+ *  Parameter    :entry--自动机
+ *************************************************************************************/
+
+void RemoveEntry(int num, MATCHENTRY *entry)
+{
+  int i;
+  if (num<2) num=2;
+  if (entry->wordlist!=NULL)
+    {
+       for (i=0;i<entry->wordsnum;i++)             //对原来的空间释放 
+           free(entry->wordlist[i].word);
+       free(entry->wordlist);               
+    } 
+  if (entry->states!=NULL) free(entry->states);
+  entry->wordlist=(KEYWORD *)malloc(sizeof(KEYWORD)*(num));
+  entry->wordlistlength=num;
+  entry->wordsnum=0;
+  entry->wordslength=0;
+  entry->totalfind=0;
+  entry->states=NULL;
+  entry->usedstates=0;
+}

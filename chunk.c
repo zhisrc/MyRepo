@@ -1,0 +1,106 @@
+/*************************************************************************
+	> File Name: chunk.c
+	> Author: ganzhixiong
+	> Mail: ahigzx@163.com 
+	> Created Time: Thu 10 Dec 2015 02:10:12 PM CST
+ ************************************************************************/
+
+#include <stdio.h>
+#include <zlib.h>
+#include <stdlib.h>
+#include <string.h>
+#include "http.h"
+#include "keyword_match.h"
+#include "logqueue.h"
+extern MATCHENTRY *http_blockmatch;
+extern MATCHENTRY *http_match;
+
+int gzip_uncompress(z_stream *strm, Byte *bufin, int lenin, Byte *bufout, int lenout)
+{
+	memset(bufout, '\0', lenout);
+	strm->next_in   = bufin;
+	strm->avail_in  = lenin;
+	strm->next_out  = bufout;
+	strm->avail_out = lenout;
+	inflate(strm, Z_SYNC_FLUSH);
+}
+
+//data指向实体数据部分, datalen表示实体数据部分长度
+int chunk_gzip(char *data, int datalen, char ungzip_data[], z_stream *strm, struct tcp_stream *tcp_http_connection, int *is_block)
+{
+	char *front;
+	char *rear;
+	char *findword = (char*)malloc(100*sizeof(char));
+	int chunk_len = 1; //当前chunk长度,初始值赋值为一个不等于0的小值
+	int head_len;  //当前chunk数据起点到源数据起点处的长度k
+	int ck_len;
+	struct tuple4 ip_and_port = tcp_http_connection->addr;
+	front = rear = data;
+	while(chunk_len!=0)
+	{
+		while(*rear != '\r')
+		{
+			rear++;
+		}
+		*rear = '\0';
+		sscanf(front,"%x",&chunk_len);
+		rear += 2;  //跳过'\n'
+		head_len = (int)(rear - front); 
+		if (chunk_len > (datalen-head_len))
+		{
+			//printf("chunk在本tcp包中的数据是不全的\n");
+			ck_len = datalen - head_len;  //ck_len表示当前包中包含的本chunk长度
+			//直接用rear这里加个长度解压
+			gzip_uncompress(strm, rear, ck_len, ungzip_data,10000);
+			if(Match(ungzip_data, 0, http_blockmatch, findword))
+			{
+				//nids_killtcp(tcp_http_connection);
+				tcp_block(tcp_http_connection);
+				*is_block = 1;	
+				httplog_producer(findword, ip_and_port, *is_block, NULL);
+				free(findword);
+				return -1;
+			}
+			else if(Match(ungzip_data, 0, http_match, findword))
+			{
+				httplog_producer(findword, ip_and_port, *is_block, NULL);
+				free(findword);
+				//日志
+			}
+			//printf("ungzip data:%s\n",ungzip_data);
+			return chunk_len-ck_len; //返回剩下的chunk长度
+		}
+		else
+		{
+			if (chunk_len)
+			{
+				ck_len = chunk_len;
+				gzip_uncompress(strm, rear, ck_len, ungzip_data,10000);
+				if(Match(ungzip_data, 0, http_blockmatch, findword))
+				{
+					//nids_killtcp(tcp_http_connection);
+					tcp_block(tcp_http_connection);
+					*is_block = 1;
+					httplog_producer(findword, ip_and_port, *is_block, NULL);
+					free(findword);
+					return -1;
+				}
+				else if(Match(ungzip_data, 0, http_match, findword))
+				{
+					httplog_producer(findword, ip_and_port, *is_block, NULL);
+					free(findword);
+					//日志
+				}
+				//这里有第一个chunk段为gzip前10个字节的情况需要考虑
+				//printf("ungzip data:%s\n",ungzip_data);
+				if (datalen == chunk_len + head_len + 2)
+					break;
+				rear += chunk_len + 2; //如果当前chunk在本包中，则跳到下一个长度的起始处
+			}
+		}
+	}
+	free(findword);
+	return 0;
+
+}
+	

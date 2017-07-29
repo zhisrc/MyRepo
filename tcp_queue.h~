@@ -1,0 +1,51 @@
+#ifndef  TCP_QUEUE_H 
+#define  TCP_QUEUE_H 
+
+#include <nids.h>
+#include <stdio.h>
+#include<stdlib.h>
+#include<string.h>
+#include<libnet.h>
+#include<pcap.h>
+#include<arpa/inet.h>
+#include<sys/socket.h>
+#include"conn.h"
+#include"update.h"
+#include "tcp_hash.h"
+
+#include<pthread.h>
+#define MAXQSIZE 2048
+
+
+
+
+
+
+typedef struct Qnode
+{
+  struct tcp_stream * tcp_connection;
+  
+}node;
+ 
+typedef struct 
+{
+  //struct tcp_stream *base;
+  node *base;
+  int front;
+  int rear;
+}SqQueue;
+
+SqQueue * InitQueue(SqQueue * );
+
+int EnQueue(struct Qnode q,SqQueue *Q);
+
+//struct tcp_stream * DeQueue ( )
+struct Qnode  DeQueue(SqQueue *Q);
+
+int QueueLength(SqQueue *Q);
+void tcp_protocol_callback_1(struct tcp_stream *tcp_connection, void **arg);
+void tcp_protocol_callback(struct tcp_stream *tcp_connection, void **arg);
+void* consumer(void* arg);
+void* pcap_tcp(void* arg);
+#endif
+

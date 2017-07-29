@@ -1,0 +1,44 @@
+#ifndef  ASS_H 
+#define  ASS_H 
+
+
+
+#include <nids.h>
+#include <stdio.h>
+#include<stdlib.h>
+#include<string.h>
+#include<libnet.h>
+#include<pcap.h>
+#include<arpa/inet.h>
+#include<sys/socket.h>
+#include "tcp_hash.h"
+typedef struct assciate_node
+{
+  struct tuple4 c_tup4;
+  char *filename;
+  char *uri;
+  long long int length;
+  struct tuple4 d_tup4;
+  struct assciate_node *next;
+  unsigned int ip ;
+}ass_node;
+ass_node *table=NULL;
+void ass_insert(ass_node *a_node);
+void ass_insertfile(unsigned int ip,char *filename);
+void ass_insert(ass_node *a_node);
+void ass_inserturi( char *filename,char *uri);
+void ass_insertfile(unsigned int ip,char *filename);
+int Find_anode(unsigned int ip);
+char *Find_name(char *uri);
+char *Find_filename(unsigned int ip);
+long int  Find_anode_length(char *uri);
+void analy_uri(char *content,int count_new);
+void analy_chat(char *content,int count_new,struct tuple4 ip_and_port);
+void analy_fileinfo(char *content,int count_new);
+void analy_fileinfo_2(char *content,int count_new);
+void analy_filecontent(char *content,int count_new,struct tuple4 ip_and_port);
+void   analy_stocfilecontent(char *content,int count_new,struct tuple4 ip_and_port);
+#endif
+
+
+

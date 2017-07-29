@@ -1,0 +1,15 @@
+/*************************************************************************
+	> File Name: telnet.h
+	> Author: ma6174
+	> Mail: ma6174@163.com 
+	> Created Time: 2015年12月22日 星期二 23时09分10秒
+ ************************************************************************/
+
+#include <nids.h>
+#include "telnet_link.h"
+
+void telnet_process(struct tcp_stream *telnet_connection, void **arg);
+void telnet_protocol_callback(struct tcp_stream *telnet_connection, void **arg);
+void packet_telnet_store(packet_telnet *p_telnet);
+void* tel_consumer(void* arg);
+
